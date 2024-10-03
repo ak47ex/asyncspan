@@ -4,13 +4,16 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
+import android.os.SystemClock
 import android.text.style.ImageSpan
 import android.widget.TextView
 import androidx.core.graphics.withClip
 import androidx.core.graphics.withTranslation
 import androidx.core.view.doOnPreDraw
 import java.lang.ref.WeakReference
+import java.util.WeakHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -41,9 +44,11 @@ public open class FitFontImageSpan(
         drawable.callback = SpanDrawableCallback(lastAttachedView).also {
             callback = it
         }
+        (drawable as? Animatable)?.start()
     }
 
     override fun detach(textView: TextView) {
+        (drawable as? Animatable)?.stop()
         lastAttachedView.clear()
         drawable.callback = null
         callback = null
@@ -154,6 +159,7 @@ public open class FitFontImageSpan(
 
     private inner class SpanDrawableCallback(private val ref: WeakReference<TextView>) : Drawable.Callback {
 
+        private val scheduledRunnables = WeakHashMap<Runnable, Runnable>()
         private val isInvalidatePosted = AtomicBoolean(false)
 
         override fun invalidateDrawable(who: Drawable) {
@@ -172,11 +178,18 @@ public open class FitFontImageSpan(
         }
 
         override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
-            ref.get()?.postDelayed(what, `when`)
+            val wrappedWhat = Runnable {
+                what.run()
+                ref.get()?.invalidateSpan(this@FitFontImageSpan)
+            }
+            scheduledRunnables.put(what, wrappedWhat)
+            ref.get()?.postDelayed(wrappedWhat, `when` - SystemClock.uptimeMillis())
         }
 
         override fun unscheduleDrawable(who: Drawable, what: Runnable) {
-            ref.get()?.removeCallbacks(what)
+            scheduledRunnables.remove(what).let { wrappedWhat ->
+                ref.get()?.removeCallbacks(wrappedWhat)
+            }
         }
     }
 
